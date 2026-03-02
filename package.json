@@ -1,6 +1,6 @@
 {
   "name": "worktree-devservers",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Run multiple dev servers in git worktrees with automatic port allocation and reverse proxy routing via Caddy",
   "author": "Viktor Marinho <viktormarinho@users.noreply.github.com>",
   "license": "MIT",

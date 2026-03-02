@@ -102,7 +102,23 @@ async function ensureCaddyServer(cfg: Config): Promise<void> {
   const res = await fetch(
     `${cfg.caddyAdmin}/config/apps/http/servers/${cfg.serverId}`,
   );
-  if (res.ok) return;
+  if (res.ok) {
+    // Server exists — ensure routes array exists too
+    const routesRes = await fetch(
+      `${cfg.caddyAdmin}/config/apps/http/servers/${cfg.serverId}/routes`,
+    );
+    if (!routesRes.ok) {
+      await fetch(
+        `${cfg.caddyAdmin}/config/apps/http/servers/${cfg.serverId}/routes`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify([]),
+        },
+      );
+    }
+    return;
+  }
 
   const currentRes = await fetch(`${cfg.caddyAdmin}/config/`);
   const current: any = (currentRes.ok ? await currentRes.json() : null) ?? {};
