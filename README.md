@@ -26,6 +26,29 @@ bun add worktree-devservers
 
 ## Usage
 
+### CLI
+
+The quickest way — no code needed:
+
+```bash
+dev-worktree --slug myapp -- bun run dev
+```
+
+The allocated port is set as the `PORT` env var. You can also reference it explicitly with `$PORT`:
+
+```bash
+dev-worktree --slug myapp --port 4000 -- vite --port \$PORT
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--slug` | (required) | Subdomain name |
+| `--port` | `3000` | Starting port to search from |
+
+### Programmatic API
+
+For more control, import and call `startWorktree` directly:
+
 ```typescript
 import { startWorktree } from "worktree-devservers";
 
@@ -47,7 +70,7 @@ startWorktree(slug, async (ctx) => {
 });
 ```
 
-Then access your dev server at `http://<slug>.localhost`.
+Either way, access your dev server at `http://<slug>.localhost`.
 
 ## API
 
@@ -77,7 +100,6 @@ Then access your dev server at `http://<slug>.localhost`.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `mapDir` | `~/.worktree-devservers` | Directory for state file |
 | `caddyAdmin` | `http://localhost:2019` | Caddy admin API URL |
 | `serverId` | `worktree-devservers` | Caddy server block ID |
 | `listenPort` | `80` | Port Caddy listens on |
