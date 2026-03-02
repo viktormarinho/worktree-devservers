@@ -103,20 +103,28 @@ async function ensureCaddyServer(cfg: Config): Promise<void> {
     `${cfg.caddyAdmin}/config/apps/http/servers/${cfg.serverId}`,
   );
   if (res.ok) {
-    // Server exists — ensure routes array exists too
-    const routesRes = await fetch(
-      `${cfg.caddyAdmin}/config/apps/http/servers/${cfg.serverId}/routes`,
-    );
-    if (!routesRes.ok) {
-      await fetch(
-        `${cfg.caddyAdmin}/config/apps/http/servers/${cfg.serverId}/routes`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify([]),
-        },
-      );
+    const base = `${cfg.caddyAdmin}/config/apps/http/servers/${cfg.serverId}`;
+
+    // Ensure listen array exists
+    const listenRes = await fetch(`${base}/listen`);
+    if (!listenRes.ok) {
+      await fetch(`${base}/listen`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify([`:${cfg.listenPort}`]),
+      });
     }
+
+    // Ensure routes array exists
+    const routesRes = await fetch(`${base}/routes`);
+    if (!routesRes.ok) {
+      await fetch(`${base}/routes`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify([]),
+      });
+    }
+
     return;
   }
 
