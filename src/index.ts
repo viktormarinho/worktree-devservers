@@ -1,98 +1,46 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
 import type { Subprocess } from "bun";
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
+export interface WorktreeOptions {
+  /** Caddy admin API base URL (default: "http://localhost:2019") */
+  caddyAdmin?: string;
+  /** Caddy server block ID (default: "worktree-devservers") */
+  serverId?: string;
+  /** Port Caddy listens on (default: 80) */
+  listenPort?: number;
+}
+
 export interface WorktreeContext {
   slug: string;
-  /** Find the next free port starting from `start`. Tracks allocated ports
-   *  internally so sequential calls never return the same port. */
   findFreePort(start: number): Promise<number>;
 }
 
 export interface WorktreeHandle {
-  /** The port Caddy should reverse-proxy to (e.g. your HTTP server). */
   port: number;
-  /** The child process to await / kill on cleanup. */
   process: Subprocess;
 }
 
 export type StartFn = (ctx: WorktreeContext) => Promise<WorktreeHandle>;
 
-export interface WorktreeOptions {
-  /** Directory to store the proxy-map.json state file.
-   *  @default ~/.worktree-devservers */
-  mapDir?: string;
-  /** Caddy admin API base URL.
-   *  @default http://localhost:2019 */
-  caddyAdmin?: string;
-  /** Caddy server block ID used for worktree routes.
-   *  @default worktree-devservers */
-  serverId?: string;
-  /** Port Caddy listens on for incoming requests.
-   *  @default 80 */
-  listenPort?: number;
-}
-
 // ---------------------------------------------------------------------------
-// Resolved config
+// Config
 // ---------------------------------------------------------------------------
 
 interface Config {
-  mapDir: string;
-  mapFile: string;
   caddyAdmin: string;
   serverId: string;
   listenPort: number;
 }
 
 function resolveConfig(opts: WorktreeOptions = {}): Config {
-  const mapDir = opts.mapDir ?? join(homedir(), ".worktree-devservers");
   return {
-    mapDir,
-    mapFile: join(mapDir, "proxy-map.json"),
     caddyAdmin: opts.caddyAdmin ?? "http://localhost:2019",
     serverId: opts.serverId ?? "worktree-devservers",
     listenPort: opts.listenPort ?? 80,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Proxy-map persistence
-// ---------------------------------------------------------------------------
-
-interface MapEntry {
-  port: number;
-  pid: number;
-}
-
-type ProxyMap = Record<string, MapEntry>;
-
-function readMap(cfg: Config): ProxyMap {
-  if (!existsSync(cfg.mapFile)) return {};
-  try {
-    return JSON.parse(readFileSync(cfg.mapFile, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-function writeMap(cfg: Config, map: ProxyMap): void {
-  if (!existsSync(cfg.mapDir)) mkdirSync(cfg.mapDir, { recursive: true });
-  writeFileSync(cfg.mapFile, JSON.stringify(map, null, 2));
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +55,7 @@ function probePort(hostname: string, port: number): Promise<boolean> {
       socket: {
         open(socket) {
           socket.end();
-          resolve(false); // something is listening → in use
+          resolve(false); // something is listening → port in use
         },
         data() {},
         error() {
@@ -142,7 +90,7 @@ async function assertCaddyRunning(cfg: Config): Promise<void> {
 ❌ Caddy is not running. One-time setup required:
 
   brew install caddy
-  sudo caddy start
+  caddy start
 
 Then re-run your dev:worktree command.
 `);
@@ -157,7 +105,7 @@ async function ensureCaddyServer(cfg: Config): Promise<void> {
   if (res.ok) return;
 
   const currentRes = await fetch(`${cfg.caddyAdmin}/config/`);
-  const current = (currentRes.ok ? await currentRes.json() : null) ?? {};
+  const current: any = (currentRes.ok ? await currentRes.json() : null) ?? {};
 
   const merged = {
     ...current,
@@ -167,10 +115,7 @@ async function ensureCaddyServer(cfg: Config): Promise<void> {
         ...(current.apps?.http ?? {}),
         servers: {
           ...(current.apps?.http?.servers ?? {}),
-          [cfg.serverId]: {
-            listen: [`:${cfg.listenPort}`],
-            routes: [],
-          },
+          [cfg.serverId]: { listen: [`:${cfg.listenPort}`], routes: [] },
         },
       },
     },
@@ -190,6 +135,35 @@ async function ensureCaddyServer(cfg: Config): Promise<void> {
   console.log(
     `✓ Bootstrapped Caddy server '${cfg.serverId}' on :${cfg.listenPort}`,
   );
+}
+
+interface CaddyRoute {
+  "@id"?: string;
+  handle?: Array<{
+    handler: string;
+    upstreams?: Array<{ dial: string }>;
+  }>;
+}
+
+async function getRoutes(cfg: Config): Promise<CaddyRoute[]> {
+  const res = await fetch(
+    `${cfg.caddyAdmin}/config/apps/http/servers/${cfg.serverId}/routes`,
+  );
+  if (!res.ok) return [];
+  return (await res.json()) as CaddyRoute[];
+}
+
+function parseRoutePort(route: CaddyRoute): number | null {
+  const dial = route.handle?.[0]?.upstreams?.[0]?.dial;
+  if (!dial) return null;
+  const match = dial.match(/:(\d+)$/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function parseRouteSlug(route: CaddyRoute): string | null {
+  const id = route["@id"];
+  if (!id?.startsWith("worktree-")) return null;
+  return id.slice("worktree-".length);
 }
 
 async function registerRoute(
@@ -240,24 +214,26 @@ export async function startWorktree(
 ): Promise<void> {
   const cfg = resolveConfig(options);
 
-  // 1. Clean stale entries and collect used ports
-  const map = readMap(cfg);
-  const usedPorts = new Set<number>();
-
-  for (const [key, entry] of Object.entries(map)) {
-    if (isProcessAlive(entry.pid)) {
-      usedPorts.add(entry.port);
-    } else {
-      console.log(`🧹 Cleaned stale entry for '${key}'`);
-      await removeRoute(cfg, key);
-      delete map[key];
-    }
-  }
-  writeMap(cfg, map);
-
-  // 2. Set up Caddy
+  // 1. Ensure Caddy is ready
   await assertCaddyRunning(cfg);
   await ensureCaddyServer(cfg);
+
+  // 2. Read existing routes from Caddy, clean stale ones, collect used ports
+  const routes = await getRoutes(cfg);
+  const usedPorts = new Set<number>();
+
+  for (const route of routes) {
+    const routeSlug = parseRouteSlug(route);
+    const routePort = parseRoutePort(route);
+    if (!routeSlug || !routePort) continue;
+
+    if (await isPortFree(routePort)) {
+      console.log(`🧹 Cleaned stale route for '${routeSlug}' (port ${routePort} not listening)`);
+      await removeRoute(cfg, routeSlug);
+    } else {
+      usedPorts.add(routePort);
+    }
+  }
 
   // 3. Build context and call the start callback
   const ctx: WorktreeContext = {
@@ -276,10 +252,8 @@ export async function startWorktree(
 
   const handle = await start(ctx);
 
-  // 4. Register Caddy route and persist
+  // 4. Register Caddy route
   await registerRoute(cfg, slug, handle.port);
-  map[slug] = { port: handle.port, pid: process.pid };
-  writeMap(cfg, map);
 
   console.log(`✅ http://${slug}.localhost is live`);
 
@@ -291,9 +265,6 @@ export async function startWorktree(
     } catch (e) {
       console.warn("Warning: failed to remove Caddy route:", e);
     }
-    const current = readMap(cfg);
-    delete current[slug];
-    writeMap(cfg, current);
     handle.process.kill();
     process.exit(0);
   }

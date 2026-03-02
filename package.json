@@ -1,17 +1,20 @@
 {
   "name": "worktree-devservers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run multiple dev servers in git worktrees with automatic port allocation and reverse proxy routing via Caddy",
   "author": "Viktor Marinho <viktormarinho@users.noreply.github.com>",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "dev-worktree": "dist/cli.js"
+  },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun && bun run build:types",
+    "build": "bun build src/index.ts src/cli.ts --outdir dist --target bun && bun run build:types",
     "build:types": "tsc --emitDeclarationOnly",
     "prepublishOnly": "bun run build"
   },

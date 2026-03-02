@@ -15,7 +15,7 @@ Built for coding agents (Conductor, Claude Code, Cursor) that work in isolated w
 
 ```bash
 brew install caddy
-sudo caddy start
+caddy start
 ```
 
 ## Install
